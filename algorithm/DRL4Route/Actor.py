@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 import numpy as np
-import  math
+import math
 import time
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
 from torch.distributions import Categorical
 import warnings
+
 warnings.filterwarnings("ignore")
+
 
 class Decoder(nn.Module):
     def __init__(self,
@@ -18,7 +20,7 @@ class Decoder(nn.Module):
                  n_glimpses=1,
                  mask_glimpses=True,
                  mask_logits=True,
-                 geo_vocab_size = 10):
+                 geo_vocab_size=10):
         super(Decoder, self).__init__()
 
         self.embedding_dim = embedding_dim
@@ -46,7 +48,6 @@ class Decoder(nn.Module):
 
     def update_mask(self, mask, selected):
         def mask_modify(mask):
-
             all_true = mask.all(1)
             mask_mask = torch.zeros_like(mask)
             mask_mask[:, -1] = all_true
@@ -67,9 +68,7 @@ class Decoder(nn.Module):
         probs = log_p.exp()
 
         if not self.mask_logits:
-
             probs[logit_mask] = 0.
-
 
         return h_out, log_p, probs, logit_mask
 
@@ -84,7 +83,7 @@ class Decoder(nn.Module):
         g_l, h_out = hy, (hy, cy)
 
         for i in range(self.n_glimpses):
-            ref, logits = self.glimpse(g_l, context) # decoder_input -> decoder hidden state, context
+            ref, logits = self.glimpse(g_l, context)  # decoder_input -> decoder hidden state, context
             # For the glimpses, only mask before softmax so we have always an L1 norm 1 readout vector
             if mask_glimpses:
                 logits[logit_mask] = -np.inf
@@ -119,8 +118,7 @@ class Decoder(nn.Module):
 
         if type == 'mle':
             for i in steps:
-
-                hidden, log_p, probs, mask = self.recurrence(decoder_input, hidden, mask, idxs, i, context) # decoder_input, hidden, context
+                hidden, log_p, probs, mask = self.recurrence(decoder_input, hidden, mask, idxs, i, context)  # decoder_input, hidden, context
                 # select the next inputs for the decoder [batch_size x hidden_dim]
                 idxs, log_prob = self.decode(
                     probs,
@@ -139,13 +137,13 @@ class Decoder(nn.Module):
 
                 # use outs to point to next object
                 outputs.append(log_p)
-                selections.append(idxs) #B * t
+                selections.append(idxs)  # B * t
 
-            return (torch.stack(outputs, 1), torch.stack(selections, 1),  scores)
+            return (torch.stack(outputs, 1), torch.stack(selections, 1), scores)
         else:
             log_probs = []
             for i in steps:
-                hidden, log_p, probs, mask= self.recurrence(decoder_input, hidden, mask, idxs, i, context)
+                hidden, log_p, probs, mask = self.recurrence(decoder_input, hidden, mask, idxs, i, context)
                 # select the next inputs for the decoder [batch_size x hidden_dim]
                 idxs, log_prob = self.decode(
                     probs,
@@ -163,6 +161,7 @@ class Decoder(nn.Module):
                 outputs.append(log_p)
                 selections.append(idxs)
                 log_probs.append(log_prob)
+                # scores恒为0的.但是ActorCritic中的scores不为0，还有通过一个线性层
 
             return (torch.stack(outputs, 1), torch.stack(selections, 1), torch.stack(log_probs, dim=1), scores)
 
@@ -182,6 +181,7 @@ class Decoder(nn.Module):
         else:
             assert False, "Unknown decode type"
         return idxs, log_prob
+
 
 class Attention(nn.Module):
     """A generic attention module for a decoder in seq2seq"""
@@ -223,9 +223,10 @@ class Attention(nn.Module):
             logits = u
         return e, logits
 
+
 class SkipConnection(nn.Module):
 
-    def __init__(self, module, is_mask = False):
+    def __init__(self, module, is_mask=False):
         super(SkipConnection, self).__init__()
         self.module = module
         self.is_mask = is_mask
@@ -241,6 +242,7 @@ class SkipConnection(nn.Module):
             new_input = self.module(old_input)
             new_input = old_input + new_input
             return (new_input, h, mask)
+
 
 class MultiHeadAttention(nn.Module):
     def __init__(
@@ -285,7 +287,7 @@ class MultiHeadAttention(nn.Module):
     def forward(self, input):
         q, h, mask = input
         mask = mask.bool()
-        old_mask =  mask.clone()
+        old_mask = mask.clone()
         if h is None:
             h = q  # compute self-attention
 
@@ -331,6 +333,7 @@ class MultiHeadAttention(nn.Module):
         # return out
         return (out, None, old_mask)
 
+
 class Normalization(nn.Module):
 
     def __init__(self, embed_dim, normalization='batch'):
@@ -350,19 +353,20 @@ class Normalization(nn.Module):
             param.data.uniform_(-stdv, stdv)
 
     def forward(self, input):
-        input, h, mask =  input
+        input, h, mask = input
         mask = mask.bool()
         if isinstance(self.normalizer, nn.BatchNorm1d):
             input = self.normalizer(input.view(-1, input.size(-1))).view(*input.size())
-            return (input,h, mask)
+            return (input, h, mask)
 
         elif isinstance(self.normalizer, nn.InstanceNorm1d):
             input = self.normalizer(input.permute(0, 2, 1)).permute(0, 2, 1)
-            return (input,h, mask)
+            return (input, h, mask)
 
         else:
             assert self.normalizer is None, "Unknown normalizer type"
-            return (input,h, mask)
+            return (input, h, mask)
+
 
 class MultiHeadAttentionLayer(nn.Sequential):
 
@@ -380,7 +384,7 @@ class MultiHeadAttentionLayer(nn.Sequential):
                     input_dim=embed_dim,
                     embed_dim=embed_dim
                 ),
-                is_mask= True,
+                is_mask=True,
             ),
             Normalization(embed_dim, normalization),
             SkipConnection(
@@ -393,6 +397,7 @@ class MultiHeadAttentionLayer(nn.Sequential):
             ),
             Normalization(embed_dim, normalization)
         )
+
 
 class TransformerEncoder(nn.Module):
     def __init__(
@@ -415,8 +420,6 @@ class TransformerEncoder(nn.Module):
         ))
 
     def forward(self, x, mask):
-
-
         # mask implemention
         mask = mask.bool()
         h = self.init_embed(x.view(-1, x.size(-1))).view(*x.size()[:2], -1) if self.init_embed is not None else x
@@ -426,13 +429,15 @@ class TransformerEncoder(nn.Module):
             h.mean(dim=1),  # average to get embedding of graph, (batch_size, embed_dim)
         )
 
+
 def softmax(x):
     x_exp = np.exp(x)
-    x_sum = np.sum(x_exp, axis = 1, keepdims = True)
+    x_sum = np.sum(x_exp, axis=1, keepdims=True)
     s = x_exp / x_sum
     return s
 
-#-------------------------------------------------------------------------------------------------------------------------#
+
+# -------------------------------------------------------------------------------------------------------------------------#
 
 class RoutePredictionAgent(nn.Module):
     def __init__(self, args={}):
@@ -473,8 +478,8 @@ class RoutePredictionAgent(nn.Module):
         """
         Encode the sort emb and prepare the input for Decoder
         """
-        mask_indices = torch.nonzero(mask_index + 0) 
-        attn_mask = (mask_index +0).repeat_interleave(max_seq_len).reshape(batch_size, max_seq_len, max_seq_len).permute(0, 2, 1).contiguous()
+        mask_indices = torch.nonzero(mask_index + 0)
+        attn_mask = (mask_index + 0).repeat_interleave(max_seq_len).reshape(batch_size, max_seq_len, max_seq_len).permute(0, 2, 1).contiguous()
         attn_mask = attn_mask.to(sort_emb.device)
         attn_mask[mask_indices[:, 0], mask_indices[:, 1], :] = 1
         sort_encoder_outputs, emb = self.sort_encoder(sort_emb,
@@ -493,19 +498,19 @@ class RoutePredictionAgent(nn.Module):
           type: mle/rl, decode by MLE of RL
         '''
 
-        B =  V_reach_mask.size(0)
-        T =  V_reach_mask.size(1)
-        N =  V_reach_mask.size(2)
+        B = V_reach_mask.size(0)
+        T = V_reach_mask.size(1)
+        N = V_reach_mask.size(2)
         mask_index = V.reshape(-1, N, V.shape[-1])[:, :, 0] == 0
 
-        sort_x_emb = self.sort_x_embedding(V.reshape(B*T, N, -1).float())#(B*T, N, H)
+        sort_x_emb = self.sort_x_embedding(V.reshape(B * T, N, -1).float())  # (B*T, N, H)
 
         decoder_input, inputs, dec_init_state, enc_h = \
             self.enc_sort_emb(sort_x_emb, B * T, N, mask_index)
 
         if type == 'mle':
             (pointer_log_scores, pointer_argmaxs, greedy_values) = self.decoder \
-                (decoder_input, inputs, dec_init_state, enc_h,  V_reach_mask.reshape(-1, N), sample, type)
+                (decoder_input, inputs, dec_init_state, enc_h, V_reach_mask.reshape(-1, N), sample, type)
             pointer_scores = pointer_log_scores.exp()  # (B * T, N, N)
             return pointer_scores, pointer_argmaxs, greedy_values
 
@@ -519,6 +524,7 @@ class RoutePredictionAgent(nn.Module):
         file_name = '+'.join([f'{k}-{self.args[k]}' for k in ['hidden_size']])
         file_name = f'{file_name}.Actor_{time.time()}'
         return file_name
+
 
 # -------------------------------------------------------------------------------------------------------------------------#
 import os
@@ -571,6 +577,7 @@ def save2file_meta(params, file_name, head):
         data = [params[k] for k in head]
         csv_file.writerow(data)
 
+
 def save2file(params):
     file_name = ws + f'/output/{params["model"]}.csv'
     head = [
@@ -579,10 +586,9 @@ def save2file(params):
         # mdoel parameters
         'model', 'hidden_size', 'rl_ratio', 'trace_decay',
         # training set
-        'num_epoch', 'batch_size', 'lr', 'wd', 'early_stop',  'is_test', 'log_time',
+        'num_epoch', 'batch_size', 'lr', 'wd', 'early_stop', 'is_test', 'log_time',
         # metric result
-        'lsd', 'lmd', 'krc',  'hr@1', 'hr@2', 'hr@3', 'hr@4', 'hr@5', 'hr@6', 'hr@7', 'hr@8', 'hr@9', 'hr@10',
-        'ed','acc@1', 'acc@2', 'acc@3', 'acc@4', 'acc@5', 'acc@6', 'acc@7', 'acc@8', 'acc@9', 'acc@10',
+        'lsd', 'lmd', 'krc', 'hr@1', 'hr@2', 'hr@3', 'hr@4', 'hr@5', 'hr@6', 'hr@7', 'hr@8', 'hr@9', 'hr@10',
+        'ed', 'acc@1', 'acc@2', 'acc@3', 'acc@4', 'acc@5', 'acc@6', 'acc@7', 'acc@8', 'acc@9', 'acc@10',
     ]
-    save2file_meta(params,file_name,head)
-
+    save2file_meta(params, file_name, head)

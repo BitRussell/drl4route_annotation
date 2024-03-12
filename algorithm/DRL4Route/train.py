@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 import os
+
 os.environ["CUDA_VISIBLE_DEVICES"] = '0,1,2,3'
 from my_utils.utils import *
 from algorithm.DRL4Route.Dataset import DRL4RouteDataset
+
 
 def test_model(model, test_dataloader, device, pad_value, params, save2file, mode):
     from my_utils.eval import Metric
@@ -16,10 +18,10 @@ def test_model(model, test_dataloader, device, pad_value, params, save2file, mod
         for batch in tqdm(test_dataloader):
             batch = to_device(batch, device)
             V, V_reach_mask, label, label_len = batch
-            outputs, pointers, _ = model(V, V_reach_mask, sample = False, type = 'mle')
+            outputs, pointers, _ = model(V, V_reach_mask, sample=False, type='mle')
 
             pred_steps, label_steps, labels_len = get_samples(pointers.reshape(-1, outputs.size()[-1]), label.reshape(-1, outputs.size()[-1]),
-                             label_len.reshape(-1), pad_value)
+                                                              label_len.reshape(-1), pad_value)
 
             evaluator_1.update(pred_steps, label_steps, labels_len)
             evaluator_2.update(pred_steps, label_steps, labels_len)
@@ -38,8 +40,8 @@ def test_model(model, test_dataloader, device, pad_value, params, save2file, mod
     params_2['eval_max'] = params['eval_end_2']
     save2file(params_2)
 
-
     return evaluator_2
+
 
 def process_batch(batch, model, device, params):
     batch = to_device(batch, device)
@@ -53,8 +55,10 @@ def process_batch(batch, model, device, params):
     with torch.autograd.no_grad():
         _, greedy_out, _ = model(V, V_reach_mask, sample=False, type='rl')
     if params['model'] == 'DRL4Route_REINFORCE':
+        # 计算非pad的预测值长度，(B*T)
         seq_pred_len = torch.sum((pred_pointers.reshape(-1, N) < N - 1) + 0, dim=1)
 
+        # 按照label数据，去掉那些label中全是pad值的样本。结果<B*T,N
         sample_out_samples, greedy_out_samples, label_samples, label_len_samples, rl_log_probs_samples, seq_pred_len_samples = \
             get_reinforce_samples(sample_out.reshape(-1, N), greedy_out.reshape(-1, N), label.reshape(-1, N), label_len.reshape(-1), params['pad_value'], rl_log_probs, seq_pred_len)
 
@@ -66,8 +70,10 @@ def process_batch(batch, model, device, params):
 
         krc_reward, lsd_reward, acc_3_reward = calc_reinforce_rewards(sample_out_samples, label_samples, label_len_samples, params)
 
+        # 以贪心为baseline，理论上baseline还可以为平均值
         baseline_krc_reward, baseline_lsd_reward, baseline_acc_3_reward = calc_reinforce_rewards(greedy_out_samples, label_samples, label_len_samples, params)
 
+        # 这个损失函数是按照策略梯度算法进行计算的，lsd_reward相当于采样得到的Q，baseline与行为函数无关即可。论文中并没有此部分的损失...带baseline的损失可以减少方差。在batch个样本中进行平均，求得损失。
         reinforce_loss = -torch.mean(torch.tensor(baseline_lsd_reward - lsd_reward).to(rl_log_probs_samples.device) * rl_log_probs_samples)
 
         loss = mle_loss + params['rl_ratio'] * reinforce_loss
@@ -76,9 +82,11 @@ def process_batch(batch, model, device, params):
 
     return pred_pointers, pred_scores, loss, sample_out, greedy_out, label, V_reach_mask, rl_log_probs, sample_values
 
+
 def main(params):
     trainer = DRL4Route()
     trainer.run(params, DRL4RouteDataset, process_batch, test_model)
+
 
 def get_params():
     parser = get_common_params()

@@ -1,24 +1,29 @@
 # -*- coding: utf-8 -*-
 import numpy as np
 import os
-from tqdm import  tqdm
+from tqdm import tqdm
 import warnings
 import torch.nn.functional as F
+
 warnings.filterwarnings("ignore")
 import time
 import algorithm.DRL4Route.ActorCritic as ActorCritic
-os.environ['MKL_SERVICE_FORCE_INTEL']='1'
-os.environ['MKL_THREADING_LAYER']='GNU'
+
+os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
+os.environ['MKL_THREADING_LAYER'] = 'GNU'
 os.environ["CUDA_VISIBLE_DEVICES"] = '0,1,2,3'
+
+
 def calc_reinforce_rewards(prediction, label, label_len, params):
     def tensor2lst(x):
-            try:
-                return x.cpu().numpy().tolist()
-            except:
-                return x
+        try:
+            return x.cpu().numpy().tolist()
+        except:
+            return x
 
     from my_utils.eval import kendall_rank_correlation, location_deviation, route_acc
 
+    # 会有超过max_task_num的case吗？
     def filter_len(prediction, label, label_len):
         len_range = [1, params['max_task_num']]
         pred_f = []
@@ -29,11 +34,14 @@ def calc_reinforce_rewards(prediction, label, label_len, params):
                 pred_f.append(prediction[i])
                 label_f.append(label[i])
                 label_len_f.append(label_len[i])
+            else:
+                print("surprise!")
         return pred_f, label_f, label_len_f
 
     prediction, label, label_len = [tensor2lst(x) for x in [prediction, label, label_len]]
     prediction, label, label_len = filter_len(prediction, label, label_len)
     pred = []
+    # 存在超过max_task_num-1的index值吗？
     for p in prediction:
         input = set([x for x in p if x < len(prediction[0]) - 1])
         tmp = list(filter(lambda pi: pi in input, p))
@@ -44,12 +52,14 @@ def calc_reinforce_rewards(prediction, label, label_len, params):
 
     return r_krc, r_lsd, r_acc_3
 
+
 def get_log_prob_mask(pred_len, params):
     log_prob_mask = torch.zeros([pred_len.shape[0], params['max_task_num']]).to(pred_len.device)
     for i in range(len(pred_len)):
         valid_len = pred_len[i].long().item()
         log_prob_mask[i][:valid_len] = 1
     return log_prob_mask
+
 
 def save2file_meta(params, file_name, head):
     def timestamp2str(stamp):
@@ -60,6 +70,7 @@ def save2file_meta(params, file_name, head):
         hour = (utc_h + 8) % 24
         t = f'{hour}:{utc_m}:{utc_s}'
         return t
+
     import csv, time, os
     dir_check(file_name)
     if not os.path.exists(file_name):
@@ -74,6 +85,7 @@ def save2file_meta(params, file_name, head):
         data = [params[k] for k in head]
         csv_file.writerow(data)
 
+
 def get_workspace():
     """
     get the workspace path
@@ -83,7 +95,10 @@ def get_workspace():
     file = os.path.dirname(cur_path)
     file = os.path.dirname(file)
     return file
-ws =  get_workspace()
+
+
+ws = get_workspace()
+
 
 def dir_check(path):
     """
@@ -93,68 +108,78 @@ def dir_check(path):
     dir = path if os.path.isdir(path) else os.path.split(path)[0]
     if not os.path.exists(dir): os.makedirs(dir)
 
-def whether_stop(metric_lst = [], n=2, mode='maximize'):
+
+def whether_stop(metric_lst=[], n=2, mode='maximize'):
     '''
     For fast parameter search, judge wether to stop the training process according to metric score
     n: Stop training for n consecutive times without rising
     mode: maximize / minimize
     '''
-    if len(metric_lst) < 1:return False # at least have 2 results.
+    if len(metric_lst) < 1: return False  # at least have 2 results.
     if mode == 'minimize': metric_lst = [-x for x in metric_lst]
     max_v = max(metric_lst)
     max_idx = 0
-    for idx,v in enumerate(metric_lst):
-        if v == max_v:max_idx = idx
+    for idx, v in enumerate(metric_lst):
+        if v == max_v: max_idx = idx
     return max_idx < len(metric_lst) - n
 
+
 from multiprocessing import Pool
-def multi_thread_work(parameter_queue,function_name,thread_number=5):
+
+
+def multi_thread_work(parameter_queue, function_name, thread_number=5):
     pool = Pool(thread_number)
     result = pool.map(function_name, parameter_queue)
     pool.close()
     pool.join()
-    return  result
+    return result
+
 
 class EarlyStop():
     """
     For training process, early stop strategy
     """
-    def __init__(self, mode='maximize', patience = 1):
+
+    def __init__(self, mode='maximize', patience=1):
         self.mode = mode
-        self.patience =  patience
+        self.patience = patience
         self.metric_lst = []
         self.stop_flag = False
-        self.best_epoch = -1 # the best epoch
-        self.is_best_change = False # whether the best change compare to the last epoch
+        self.best_epoch = -1  # the best epoch
+        self.is_best_change = False  # whether the best change compare to the last epoch
 
     def append(self, x):
         self.metric_lst.append(x)
-        #update the stop flag
+        # update the stop flag
         self.stop_flag = whether_stop(self.metric_lst, self.patience, self.mode)
-        #update the best epoch
-        best_epoch = self.metric_lst.index(max(self.metric_lst)) if self.mode == 'maximize'  else self.metric_lst.index(min(self.metric_lst))
+        # update the best epoch
+        best_epoch = self.metric_lst.index(max(self.metric_lst)) if self.mode == 'maximize' else self.metric_lst.index(min(self.metric_lst))
         if best_epoch != self.best_epoch:
             self.is_best_change = True
-            self.best_epoch = best_epoch#update the wether best change flag
+            self.best_epoch = best_epoch  # update the wether best change flag
         else:
             self.is_best_change = False
         return self.is_best_change
 
     def best_metric(self):
-        if len(self.metric_lst) == 0:return -1
+        if len(self.metric_lst) == 0:
+            return -1
         else:
             return self.metric_lst[self.best_epoch]
+
+
 def get_len_for_or_tools(init_mask_i, dis_i):
-        msk = init_mask_i.clone()
-        j, point = 0, 0
-        while not msk.all():
-            dis_j = dis_i[point].masked_fill(msk, 1e6)
-            idx = torch.argmin(dis_j)
-            if idx % 2 != 0:
-                msk[idx + 1] = 0
-            msk[idx], point = 1, idx
-            j += 1
-        return j
+    msk = init_mask_i.clone()
+    j, point = 0, 0
+    while not msk.all():
+        dis_j = dis_i[point].masked_fill(msk, 1e6)
+        idx = torch.argmin(dis_j)
+        if idx % 2 != 0:
+            msk[idx + 1] = 0
+        msk[idx], point = 1, idx
+        j += 1
+    return j
+
 
 def batch_file_name(file_dir, suffix='.train'):
     L = []
@@ -164,15 +189,17 @@ def batch_file_name(file_dir, suffix='.train'):
                 L.append(os.path.join(root, file))
     return L
 
+
 # merge all the dict in the list
-def dict_merge(dict_list = []):
-    dict_ =  {}
+def dict_merge(dict_list=[]):
+    dict_ = {}
     for dic in dict_list:
         assert isinstance(dic, dict), "object is not a dict!"
         dict_ = {**dict_, **dic}
     return dict_
 
-def get_dataset_path(params = {}):
+
+def get_dataset_path(params={}):
     dataset = params['dataset']
     file = ws + f'/data/dataset/{dataset}'
     train_path = file + f'/train.npy'
@@ -180,26 +207,28 @@ def get_dataset_path(params = {}):
     test_path = file + f'/test.npy'
     return train_path, val_path, test_path
 
+
 def write_list_list(fp, list_, model="a", sep=","):
     dir = os.path.dirname(fp)
-    if  not os.path.exists(dir): os.makedirs(dir)
-    f = open(fp,mode=model,encoding="utf-8")
-    count=0
-    lines=[]
+    if not os.path.exists(dir): os.makedirs(dir)
+    f = open(fp, mode=model, encoding="utf-8")
+    count = 0
+    lines = []
     for line in list_:
-        a_line=""
+        a_line = ""
         for l in line:
-            l=str(l)
-            a_line=a_line+l+sep
+            l = str(l)
+            a_line = a_line + l + sep
         a_line = a_line.rstrip(sep)
-        lines.append(a_line+"\n")
-        count=count+1
-        if count==10000:
+        lines.append(a_line + "\n")
+        count = count + 1
+        if count == 10000:
             f.writelines(lines)
-            count=0
-            lines=[]
+            count = 0
+            lines = []
     f.writelines(lines)
     f.close()
+
 
 def save2file_meta(params, file_name, head):
     def timestamp2str(stamp):
@@ -210,6 +239,7 @@ def save2file_meta(params, file_name, head):
         hour = (utc_h + 8) % 24
         t = f'{hour}:{utc_m}:{utc_s}'
         return t
+
     import csv, time, os
     dir_check(file_name)
     if not os.path.exists(file_name):
@@ -217,33 +247,35 @@ def save2file_meta(params, file_name, head):
         csv_file = csv.writer(f)
         csv_file.writerow(head)
         f.close()
-    with open(file_name, "a", newline='\n') as file:  #  linux:\n    windows:\r\n    mac:\r
+    with open(file_name, "a", newline='\n') as file:  # linux:\n    windows:\r\n    mac:\r
         csv_file = csv.writer(file)
         params['log_time'] = timestamp2str(time.time())
         data = [params[k] for k in head]
         csv_file.writerow(data)
 
 
-#----- Training Utils----------
+# ----- Training Utils----------
 import argparse
 import random, torch
 from torch.optim import Adam
 from pprint import pprint
 from torch.utils.data import DataLoader
+
+
 def get_common_params():
     # Training settings
     parser = argparse.ArgumentParser(description='Entry Point of the code')
     parser.add_argument('--is_test', type=bool, default=False, help='test the code')
 
     # dataset
-    parser.add_argument('--min_task_num', type=int, default=0, help = 'minimal number of task')
-    parser.add_argument('--max_task_num',  type=int, default=25, help = 'maxmal number of task')
-    parser.add_argument('--dataset', default='logistics', type=str, help='food_cou or logistics')#logistics_0831, logistics_decode_mask
+    parser.add_argument('--min_task_num', type=int, default=0, help='minimal number of task')
+    parser.add_argument('--max_task_num', type=int, default=25, help='maxmal number of task')
+    parser.add_argument('--dataset', default='logistics', type=str, help='food_cou or logistics')  # logistics_0831, logistics_decode_mask
     parser.add_argument('--pad_value', type=int, default=24, help='logistics: max_num - 1, pd: max_num + 1')
 
     ## common settings for deep models
-    parser.add_argument('--batch_size', type=int, default=64, help='input batch size for training (default: 256)')
-    parser.add_argument('--num_epoch', type=int, default=60, help='number of epochs to train (default: 1000)')
+    parser.add_argument('--batch_size', type=int, default=4, help='input batch size for training (default: 256)')
+    parser.add_argument('--num_epoch', type=int, default=1, help='number of epochs to train (default: 1000)')
     parser.add_argument('--lr', type=float, default=0.001, metavar='LR', help='learning rate (default: 1e-4)')
     parser.add_argument('--seed', type=int, default=2021, metavar='S', help='random seed (default: 6)')
     parser.add_argument('--wd', type=float, default=1e-5, help='weight decay (default: 1e-5)')
@@ -265,7 +297,8 @@ def get_common_params():
 
     return parser
 
-def filter_data(data_dict={}, len_key = 'node_len',  min_len=0, max_len=20):
+
+def filter_data(data_dict={}, len_key='node_len', min_len=0, max_len=20):
     '''
     filter data, For dataset
     '''
@@ -276,9 +309,11 @@ def filter_data(data_dict={}, len_key = 'node_len',  min_len=0, max_len=20):
         new_dic[k] = [data for idx, data in enumerate(data_dict[k]) if idx in keep_idx]
     return new_dic
 
+
 def to_device(batch, device):
     batch = [x.to(device) for x in batch]
     return batch
+
 
 def get_reinforce_samples(pred_steps, greedy_pred_steps, label_steps, label_len, pad_value, rl_log_probs, pred_len_steps):
     pred = []
@@ -288,6 +323,7 @@ def get_reinforce_samples(pred_steps, greedy_pred_steps, label_steps, label_len,
     rl_log_probs_list = []
     pred_lens = []
     for i in range(pred_steps.size()[0]):
+        # 去除pad的部分，如果某一个batch的最小值都是24，判断为不需要纳入计算的batch
         if label_steps[i].min().item() != pad_value:
             label.append(label_steps[i].cpu().numpy().tolist())
             pred.append(pred_steps[i].cpu().numpy().tolist())
@@ -296,7 +332,8 @@ def get_reinforce_samples(pred_steps, greedy_pred_steps, label_steps, label_len,
             rl_log_probs_list.append(rl_log_probs[i])
             pred_lens.append(pred_len_steps[i].cpu().numpy().tolist())
     return torch.LongTensor(pred), torch.LongTensor(greedy_pred), torch.LongTensor(label), \
-           torch.LongTensor(label_len_list), torch.stack(rl_log_probs_list), torch.LongTensor(pred_lens).to(pred_steps.device)
+        torch.LongTensor(label_len_list), torch.stack(rl_log_probs_list), torch.LongTensor(pred_lens).to(pred_steps.device)
+
 
 def get_samples(pred_steps, label_steps, label_len, pad_value):
     pred = []
@@ -309,6 +346,7 @@ def get_samples(pred_steps, label_steps, label_len, pad_value):
             label_len_list.append(label_len[i].detach().cpu().numpy().tolist())
     return torch.LongTensor(pred), torch.LongTensor(label), torch.LongTensor(label_len_list)
 
+
 def get_model_function(model):
     model_dict = {}
     import algorithm.DRL4Route.Actor as Actor
@@ -316,36 +354,41 @@ def get_model_function(model):
     model, save2file = model_dict[model]
     return model, save2file
 
+
 import math
+
+
 def calc_reward(sample, label, params):
-    #calculate rewar of each step
+    # calculate rewar of each step
     sample = sample.detach().cpu().tolist()
     label = label.detach().cpu().tolist()
-    reward = params['r_0'] #set reward
+    reward = params['r_0']  # set reward
     valid_label_length = len(label)
-    #perfectly match
+    # perfectly match
     if sample[-1] in label:
         if label.index(sample[-1]) == sample.index(sample[-1]):
-            return reward
-    idx_diff_list = []
-    if sample[-1] not in label: #sample not in label
-        if sample.index(sample[-1]) > valid_label_length - 1: #already output all valid samples, do not evaluate
+            return reward  # case4
+    idx_diff_list = []  # 每一次其实只是计算一个位置上对错，为什么要用一个list呢？
+    if sample[-1] not in label:  # sample not in label
+        if sample.index(sample[-1]) > valid_label_length - 1:  # already output all valid samples, do not evaluate, case2
             return 0
         else:
-            idx_diff_list.append(math.fabs(valid_label_length - sample.index(sample[-1]))) #incorrect sample outputted during the positions of label
+            idx_diff_list.append(math.fabs(valid_label_length - sample.index(sample[-1])))  # incorrect sample outputted during the positions of label, case1
     else:
-        idx_diff_list.append(math.fabs(label.index(sample[-1]) - sample.index(sample[-1]))) #sample outputted during the positions of label
+        idx_diff_list.append(math.fabs(label.index(sample[-1]) - sample.index(sample[-1])))  # sample outputted during the positions of label, case3
     idx_diff_list = list(map(lambda x: x ** 2, idx_diff_list))
-    reward =  - sum(idx_diff_list) / len(idx_diff_list)
+    reward = - sum(idx_diff_list) / len(idx_diff_list)
     return reward
+
 
 def calc_single_reward(sample, label, params):
     reward = []
-    sample = sample[(sample != params['pad_value']).nonzero().squeeze(1)]
+    sample = sample[(sample != params['pad_value']).nonzero().squeeze(1)]  # 取出不是pad的部分
     label = label[(label != params['pad_value']).nonzero().squeeze(1)]
-    for t in range(len(sample)): #for decode time steps
+    for t in range(len(sample)):  # for decode time steps，reward的长短跟sample的步数是一样的。每次计算的只是t步的lsd reward
         reward.append(calc_reward(sample[:t + 1], label, params))
     return reward
+
 
 class DRL4Route(object):
     def filter_sample(self, V_reach_mask, rl_log_prob, greedy_out, label, scores, params):
@@ -363,8 +406,9 @@ class DRL4Route(object):
                 scores_list.append(scores[i])
         return torch.stack(V_reach_mask_list), torch.stack(rl_log_prob_list), torch.stack(greedy_out_list), torch.stack(label_list), torch.stack(scores_list)
 
-    def get_values(self,V_reach_mask, rl_log_prob, sample_out, label, state_values, params):
-        V_reach_mask, rl_log_prob, sample_out, label, state_values = self.filter_sample(V_reach_mask.reshape(-1, params['max_task_num']), rl_log_prob, sample_out, label.reshape(-1, params['max_task_num']), state_values, params)
+    def get_values(self, V_reach_mask, rl_log_prob, sample_out, label, state_values, params):
+        V_reach_mask, rl_log_prob, sample_out, label, state_values = self.filter_sample(V_reach_mask.reshape(-1, params['max_task_num']), rl_log_prob, sample_out,
+                                                                                        label.reshape(-1, params['max_task_num']), state_values, params)
         r_steps = []
         state_value_samples = []
         rl_log_probs = []
@@ -375,45 +419,45 @@ class DRL4Route(object):
             r_steps.extend(calc_single_reward(sample_out[n], label[n], params))
         valid_index = (sample_out.reshape(-1) != params['max_task_num'] - 1).nonzero().squeeze(1).detach().cpu().tolist()
         done_index = []
-        for k in range(len(label.reshape(-1, params['max_task_num']))):
+        for k in range(len(label.reshape(-1, params['max_task_num']))):  # 不就是range（batch）吗？
             if k == 0:
                 done_index.append((~V_reach_mask.reshape(-1, params['max_task_num'])[k] + 0).sum().item())
             else:
                 done_index.append((~V_reach_mask.reshape(-1, params['max_task_num'])[k] + 0).sum().item() + done_index[-1])
         for i in range(len(r_steps)):
-            rl_log_probs.append(rl_log_prob.reshape(-1, 1)[valid_index[i]])  # samples of each time step
-            state_value_samples.append(state_values.reshape(-1, 1)[valid_index[i]])
+            rl_log_probs.append(rl_log_prob.reshape(-1, 1)[valid_index[i]])  # samples of each time step，取出对应t步回报的log_prob
+            state_value_samples.append(state_values.reshape(-1, 1)[valid_index[i]])  # state_values是actorcritic模拟的状态值
 
-        done_index.insert(0, 0) #stat_index
+        done_index.insert(0, 0)  # stat_index
         rewards_ = []
         advantages = []
-        for sample_index in range(len(done_index) - 1):
+        for sample_index in range(len(done_index) - 1):  # 在batch维度上循环
             R = 0
             advantage = 0
             next_value = 0
-            r_samples = r_steps[done_index[sample_index]: done_index[sample_index + 1]]
-            v_samples = state_value_samples[done_index[sample_index]: done_index[sample_index + 1]]
+            r_samples = r_steps[done_index[sample_index]: done_index[sample_index + 1]]  # 因为r_steps是打散了batch，所以使用重建的done_index来索引
+            v_samples = state_value_samples[done_index[sample_index]: done_index[sample_index + 1]]  # v_samples对应的状态值函数的预估值
             rewards_sample = []
             advantage_sample = []
-            for r, v in zip(r_samples[::-1], v_samples[::-1]):
-                R = r + params['gamma'] * R
+            for r, v in zip(r_samples[::-1], v_samples[::-1]):  # 倒排r_samples
+                R = r + params['gamma'] * R  # 反向遍历求累计回报
                 if r == 0:
                     v = 0
                 else:
                     v = v.item()
-                rewards_sample.insert(0, R)
-                td_error = r + next_value * params['gamma'] - v
+                rewards_sample.insert(0, R)  # rewards_sample这个list的t位置为t时刻到结束的累计回报
+                td_error = r + next_value * params['gamma'] - v  # 以下两行是GEA算法核心
                 advantage = td_error + advantage * params['gamma'] * params['trace_decay']
                 next_value = v
                 advantage_sample.insert(0, advantage)
-            advantages.extend(advantage_sample)
-            rewards_.extend(rewards_sample)
-        #remove samples that will not be evaluated because of newly accepted orders
+            advantages.extend(advantage_sample)  # 打散batch的所有优势函数值
+            rewards_.extend(rewards_sample)  # 打散batch的的所有累计回报
+        # remove samples that will not be evaluated because of newly accepted orders
         rl_log_probs_list = []
         rewards_list = []
         state_value_filtered = []
         advantages_list_filtered = []
-        valid_index_2 = (torch.tensor(rewards_) != 0).nonzero().squeeze(1).tolist() # reward of steps that are evaluated
+        valid_index_2 = (torch.tensor(rewards_) != 0).nonzero().squeeze(1).tolist()  # reward of steps that are evaluated
         for i in range(len(valid_index_2)):
             rewards_list.append(rewards_[valid_index_2[i]])
             rl_log_probs_list.append(rl_log_probs[valid_index_2[i]])
@@ -446,20 +490,20 @@ class DRL4Route(object):
 
         params['device'] = self.device
 
-        params['train_path'], params['val_path'],  params['test_path'] = get_dataset_path(params)
+        params['train_path'], params['val_path'], params['test_path'] = get_dataset_path(params)
         pprint(params)  # print the parameters
 
         train_dataset = DATASET(mode='train', params=params)
-        train_loader = DataLoader(train_dataset, batch_size=params['batch_size'], shuffle=True, collate_fn=None)
+        train_loader = DataLoader(train_dataset, batch_size=params['batch_size'], shuffle=False, collate_fn=None)
 
         val_dataset = DATASET(mode='val', params=params)
-        val_loader = DataLoader(val_dataset, batch_size=params['batch_size'], shuffle=True, collate_fn=None)
+        val_loader = DataLoader(val_dataset, batch_size=params['batch_size'], shuffle=False, collate_fn=None)
 
         test_dataset = DATASET(mode='test', params=params)
-        test_loader = DataLoader(test_dataset, batch_size=params['batch_size'], shuffle=True, collate_fn=None)
+        test_loader = DataLoader(test_dataset, batch_size=params['batch_size'], shuffle=False, collate_fn=None)
 
         Acotr_model, save2file = get_model_function(params['model'])
-        if (params['pre_train'] == True) or (params['model'] == 'DRL4Route_REINFORCE'): #pretrain or REINFORCE
+        if (params['pre_train'] == True) or (params['model'] == 'DRL4Route_REINFORCE'):  # pretrain or REINFORCE
             Acotr_model = Acotr_model(params)
             model_name = Acotr_model.model_file_name() + f'{time.time()}'
             save_model_path = ws + f'/data/dataset/{params["dataset"]}/model_params/{model_name}'
@@ -496,7 +540,7 @@ class DRL4Route(object):
                     if (params['pre_train'] == True) or (params['model'] == 'DRL4Route_REINFORCE'):
                         pred, pred_scores, loss, sample_out, greedy_out, label, V_reach_mask, rl_log_probs, state_values = process_batch(
                             batch, model, self.device, params)
-                    else:#Actor-Critic
+                    else:  # Actor-Critic
                         model.train()
                         pred, pred_scores, mle_loss, sample_out, greedy_out, label, V_reach_mask, rl_log_probs, state_values = process_batch(batch, model, self.device, params)
                         rl_log_probs, r_steps, state_values, advantages, b_reward_to_go = self.get_values(V_reach_mask, rl_log_probs, sample_out, label, state_values, params)
@@ -536,6 +580,3 @@ class DRL4Route(object):
         print('\n-------------------------------------------------------------')
         print('Best epoch: ', early_stop.best_epoch)
         print(f'{params["model"]} Evaluation in test:', test_result.to_str())
-
-
-

@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 import numpy as np
-import  math
+import math
 import time
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
 from torch.distributions import Categorical
 import warnings
+
 warnings.filterwarnings("ignore")
+
 
 class Decoder(nn.Module):
     def __init__(self,
@@ -18,7 +20,7 @@ class Decoder(nn.Module):
                  n_glimpses=1,
                  mask_glimpses=True,
                  mask_logits=True,
-                 geo_vocab_size = 10):
+                 geo_vocab_size=10):
         super(Decoder, self).__init__()
 
         self.embedding_dim = embedding_dim
@@ -34,7 +36,7 @@ class Decoder(nn.Module):
         self.pointer = Attention(hidden_dim, use_tanh=use_tanh, C=tanh_exploration)
         self.glimpse = Attention(hidden_dim, use_tanh=False)
         self.sm = nn.Softmax(dim=1)
-        self.score_linear =nn.Linear(25, 1)
+        self.score_linear = nn.Linear(25, 1)
 
     def check_mask(self, mask_):
         def mask_modify(mask):
@@ -48,7 +50,6 @@ class Decoder(nn.Module):
 
     def update_mask(self, mask, selected):
         def mask_modify(mask):
-
             all_true = mask.all(1)
             mask_mask = torch.zeros_like(mask)
             mask_mask[:, -1] = all_true
@@ -62,15 +63,13 @@ class Decoder(nn.Module):
         if prev_idxs == None:  # mask of the first step
             logit_mask = self.check_mask(logit_mask)
 
-
         logits, h_out = self.calc_logits(x, h_in, logit_mask, context, self.mask_glimpses, self.mask_logits)
 
         log_p = torch.log_softmax(logits, dim=1)
         probs = log_p.exp()
-        score = self.score_linear(probs)
+        score = self.score_linear(probs)  # 这里是与actor不同的地方
 
         if not self.mask_logits:
-
             probs[logit_mask] = 0.
 
         return h_out, log_p, probs, logit_mask, score
@@ -112,7 +111,6 @@ class Decoder(nn.Module):
         outputs = []
         selections = []
 
-
         scores = []
         steps = range(embedded_inputs.size(0))
         idxs = None
@@ -121,8 +119,7 @@ class Decoder(nn.Module):
 
         if type == 'mle':
             for i in steps:
-
-                hidden, log_p, probs, mask, score = self.recurrence(decoder_input, hidden, mask, idxs, i, context) # decoder_input, hidden, context
+                hidden, log_p, probs, mask, score = self.recurrence(decoder_input, hidden, mask, idxs, i, context)  # decoder_input, hidden, context
 
                 # select the next inputs for the decoder [batch_size x hidden_dim]
                 idxs, log_prob = self.decode(
@@ -141,7 +138,7 @@ class Decoder(nn.Module):
                 ).squeeze(0)
                 # use outs to point to next object
                 outputs.append(log_p)
-                selections.append(idxs) #B * t
+                selections.append(idxs)  # B * t
                 scores.append(score)
 
             return (torch.stack(outputs, 1), torch.stack(selections, 1), torch.stack(scores, 1).squeeze(2))
@@ -188,6 +185,7 @@ class Decoder(nn.Module):
             assert False, "Unknown decode type"
         return idxs, log_prob
 
+
 class Attention(nn.Module):
     """A generic attention module for a decoder in seq2seq"""
 
@@ -228,9 +226,10 @@ class Attention(nn.Module):
             logits = u
         return e, logits
 
+
 class SkipConnection(nn.Module):
 
-    def __init__(self, module, is_mask = False):
+    def __init__(self, module, is_mask=False):
         super(SkipConnection, self).__init__()
         self.module = module
         self.is_mask = is_mask
@@ -246,6 +245,7 @@ class SkipConnection(nn.Module):
             new_input = self.module(old_input)
             new_input = old_input + new_input
             return (new_input, h, mask)
+
 
 class MultiHeadAttention(nn.Module):
     def __init__(
@@ -291,7 +291,7 @@ class MultiHeadAttention(nn.Module):
 
         q, h, mask = input
         mask = mask.bool()
-        old_mask =  mask.clone()
+        old_mask = mask.clone()
         if h is None:
             h = q  # compute self-attention
 
@@ -338,6 +338,7 @@ class MultiHeadAttention(nn.Module):
         # return out
         return (out, None, old_mask)
 
+
 class Normalization(nn.Module):
 
     def __init__(self, embed_dim, normalization='batch'):
@@ -357,19 +358,20 @@ class Normalization(nn.Module):
             param.data.uniform_(-stdv, stdv)
 
     def forward(self, input):
-        input, h, mask =  input
+        input, h, mask = input
         mask = mask.bool()
         if isinstance(self.normalizer, nn.BatchNorm1d):
             input = self.normalizer(input.view(-1, input.size(-1))).view(*input.size())
-            return (input,h, mask)
+            return (input, h, mask)
 
         elif isinstance(self.normalizer, nn.InstanceNorm1d):
             input = self.normalizer(input.permute(0, 2, 1)).permute(0, 2, 1)
-            return (input,h, mask)
+            return (input, h, mask)
 
         else:
             assert self.normalizer is None, "Unknown normalizer type"
-            return (input,h, mask)
+            return (input, h, mask)
+
 
 class MultiHeadAttentionLayer(nn.Sequential):
 
@@ -387,7 +389,7 @@ class MultiHeadAttentionLayer(nn.Sequential):
                     input_dim=embed_dim,
                     embed_dim=embed_dim
                 ),
-                is_mask= True,
+                is_mask=True,
             ),
             Normalization(embed_dim, normalization),
             SkipConnection(
@@ -400,6 +402,7 @@ class MultiHeadAttentionLayer(nn.Sequential):
             ),
             Normalization(embed_dim, normalization)
         )
+
 
 class TransformerEncoder(nn.Module):
     def __init__(
@@ -422,7 +425,6 @@ class TransformerEncoder(nn.Module):
         ))
 
     def forward(self, x, mask):
-
         mask = mask.bool()
         h = self.init_embed(x.view(-1, x.size(-1))).view(*x.size()[:2], -1) if self.init_embed is not None else x
         h, _, mask = self.layers((h, None, mask))
@@ -431,13 +433,15 @@ class TransformerEncoder(nn.Module):
             h.mean(dim=1),  # average to get embedding of graph, (batch_size, embed_dim)
         )
 
+
 def softmax(x):
     x_exp = np.exp(x)
-    x_sum = np.sum(x_exp, axis = 1, keepdims = True)
+    x_sum = np.sum(x_exp, axis=1, keepdims=True)
     s = x_exp / x_sum
     return s
 
-#-------------------------------------------------------------------------------------------------------------------------#
+
+# -------------------------------------------------------------------------------------------------------------------------#
 
 class RoutePredictionAgent(nn.Module):
     def __init__(self, args={}):
@@ -474,13 +478,12 @@ class RoutePredictionAgent(nn.Module):
                 if m.bias is not None:
                     torch.nn.init.zeros_(m.bias)
 
-
     def enc_sort_emb(self, sort_emb, batch_size, max_seq_len, mask_index):
         """
         Encode the sort emb and prepare the input for Decoder
         """
-        mask_indices = torch.nonzero(mask_index + 0) 
-        attn_mask = (mask_index +0).repeat_interleave(max_seq_len).reshape(batch_size, max_seq_len, max_seq_len).permute(0, 2, 1).contiguous()
+        mask_indices = torch.nonzero(mask_index + 0)
+        attn_mask = (mask_index + 0).repeat_interleave(max_seq_len).reshape(batch_size, max_seq_len, max_seq_len).permute(0, 2, 1).contiguous()
         attn_mask = attn_mask.to(sort_emb.device)
         attn_mask[mask_indices[:, 0], mask_indices[:, 1], :] = 1
         sort_encoder_outputs, emb = self.sort_encoder(sort_emb, attn_mask)  # sort_encoder_outputs:(batch_size, max_seq_len, sort_hidden_size), # emb: (batch_size,  sort_hidden_size)
@@ -498,19 +501,19 @@ class RoutePredictionAgent(nn.Module):
         type: mle/rl, decode by MLE of RL
         '''
 
-        B =  V_reach_mask.size(0)
-        T =  V_reach_mask.size(1)
-        N =  V_reach_mask.size(2)
+        B = V_reach_mask.size(0)
+        T = V_reach_mask.size(1)
+        N = V_reach_mask.size(2)
         mask_index = V.reshape(-1, N, V.shape[-1])[:, :, 0] == 0
 
-        sort_x_emb = self.sort_x_embedding(V.reshape(B*T, N, -1).float())#(B*T, N, H)
+        sort_x_emb = self.sort_x_embedding(V.reshape(B * T, N, -1).float())  # (B*T, N, H)
 
         decoder_input, inputs, dec_init_state, enc_h = \
             self.enc_sort_emb(sort_x_emb, B * T, N, mask_index)
 
         if type == 'mle':
             (pointer_log_scores, pointer_argmaxs, greedy_values) = self.decoder \
-                (decoder_input, inputs, dec_init_state, enc_h,  V_reach_mask.reshape(-1, N), sample, type)
+                (decoder_input, inputs, dec_init_state, enc_h, V_reach_mask.reshape(-1, N), sample, type)
             pointer_scores = pointer_log_scores.exp()  # (B * T, N, N)
 
             return pointer_scores, pointer_argmaxs, greedy_values
@@ -526,8 +529,11 @@ class RoutePredictionAgent(nn.Module):
         file_name = f'{file_name}.Actor_Critic_{time.time()}.csv'
         return file_name
 
+
 # -------------------------------------------------------------------------------------------------------------------------#
 import os
+
+
 def get_workspace():
     """
     get the workspace path
@@ -537,7 +543,10 @@ def get_workspace():
     file = os.path.dirname(cur_path)
     file = os.path.dirname(file)
     return file
-ws =  get_workspace()
+
+
+ws = get_workspace()
+
 
 def dir_check(path):
     """
@@ -546,6 +555,7 @@ def dir_check(path):
     import os
     dir = path if os.path.isdir(path) else os.path.split(path)[0]
     if not os.path.exists(dir): os.makedirs(dir)
+
 
 def save2file_meta(params, file_name, head):
     def timestamp2str(stamp):
@@ -556,6 +566,7 @@ def save2file_meta(params, file_name, head):
         hour = (utc_h + 8) % 24
         t = f'{hour}:{utc_m}:{utc_s}'
         return t
+
     import csv, time, os
     dir_check(file_name)
     if not os.path.exists(file_name):
@@ -564,7 +575,7 @@ def save2file_meta(params, file_name, head):
         csv_file.writerow(head)
         f.close()
     # write_to_hdfs(file_name, head)
-    with open(file_name, "a", newline='\n') as file:  #  linux:\n    windows:\r\n    mac:\r
+    with open(file_name, "a", newline='\n') as file:  # linux:\n    windows:\r\n    mac:\r
         csv_file = csv.writer(file)
         # params['log_time'] = str(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
         params['log_time'] = timestamp2str(time.time())
@@ -578,12 +589,11 @@ def save2file(params):
         # data setting
         'dataset', 'min_task_num', 'max_task_num', 'eval_min', 'eval_max',
         # mdoel parameters
-        'model', 'hidden_size', 'rl_ratio','trace_decay', 'gamma',
+        'model', 'hidden_size', 'rl_ratio', 'trace_decay', 'gamma',
         # training set
-        'num_epoch', 'batch_size', 'lr', 'wd', 'early_stop',  'is_test', 'log_time',
+        'num_epoch', 'batch_size', 'lr', 'wd', 'early_stop', 'is_test', 'log_time',
         # metric result
-        'lsd', 'lmd', 'krc',  'hr@1', 'hr@2', 'hr@3', 'hr@4', 'hr@5', 'hr@6', 'hr@7', 'hr@8', 'hr@9', 'hr@10',
-        'ed','acc@1', 'acc@2', 'acc@3', 'acc@4', 'acc@5', 'acc@6', 'acc@7', 'acc@8', 'acc@9', 'acc@10',
+        'lsd', 'lmd', 'krc', 'hr@1', 'hr@2', 'hr@3', 'hr@4', 'hr@5', 'hr@6', 'hr@7', 'hr@8', 'hr@9', 'hr@10',
+        'ed', 'acc@1', 'acc@2', 'acc@3', 'acc@4', 'acc@5', 'acc@6', 'acc@7', 'acc@8', 'acc@9', 'acc@10',
     ]
-    save2file_meta(params,file_name,head)
-
+    save2file_meta(params, file_name, head)
